@@ -27,6 +27,12 @@ class Program {
         this.input = new Input(this.canvas);
         this.ui = new UI(this.input);
 
+        // frames list (animation frames)
+        this.frames = [];
+        this.currentFrameIndex = 0;
+        // include the initial frame
+        this.frames.push(this.frame);
+
         this.drawing = false;
         this.lastPositions = []; // array of [x,y]
         this.tool = 'pencil';
@@ -109,9 +115,16 @@ class Program {
         this.displayCtx.setTransform(1, 0, 0, 1, 0, 0);
     }
 
+    // compatibility: render alias used in several places
+    render(){ this.draw(); }
+
     commitSnapshot(message) {
-        this.vc.commit(this.frame, message || 'snapshot');
+        // include current frame index and stable frame id so undo/redo can restore the correct frame
+        const meta = { frameIndex: this.currentFrameIndex, frameId: this.frame && this.frame._id };
+        this.vc.commit(this.frame, message || 'snapshot', meta);
         this._updateHistoryUI && this._updateHistoryUI();
+        // refresh frame thumbnails so latest frame state appears in sidebar
+        if(this.renderFramePreviews) requestAnimationFrame(()=> this.renderFramePreviews());
     }
     handleDown({ event }) {
         // tool-specific down behavior
@@ -277,18 +290,106 @@ class Program {
         refreshIcons();
     }
 
+    // render frame thumbnails into the sidebar
+    renderFramePreviews(){
+        const container = document.getElementById('frames-list');
+        if(!container) return;
+        container.innerHTML = '';
+        const thumbW = 160, thumbH = 72;
+        this.frames.forEach((f, idx)=>{
+            const item = document.createElement('div');
+            item.className = 'frame-thumb' + (idx === this.currentFrameIndex ? ' selected' : '');
+            item.dataset.index = String(idx);
+            const cvs = document.createElement('canvas');
+            cvs.width = thumbW; cvs.height = thumbH;
+            const ctx = cvs.getContext('2d');
+            try{
+                // clear and draw with smoothing for a better preview
+                ctx.clearRect(0,0,thumbW,thumbH);
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = 'high';
+                ctx.fillStyle = '#fff'; ctx.fillRect(0,0,thumbW,thumbH);
+                ctx.drawImage(f.canvas, 0,0, f.canvas.width, f.canvas.height, 0,0, thumbW, thumbH);
+            }catch(e){}
+            item.appendChild(cvs);
+            item.addEventListener('click', ()=> this.selectFrame(idx));
+            container.appendChild(item);
+        });
+    }
+
+    selectFrame(idx){
+        if(idx < 0 || idx >= this.frames.length) return;
+        this.currentFrameIndex = idx;
+        this.frame = this.frames[idx];
+        this._updateToolUI();
+        this.render();
+        this.renderFramePreviews();
+    }
+
+    addFrame(){
+        const DPR = window.devicePixelRatio || 1;
+        const w = this.frame.canvas.width;
+        const h = this.frame.canvas.height;
+        const f = new Frame(w, h, DPR);
+        // clear new frame
+        f.clear();
+        this.frames.push(f);
+        this.selectFrame(this.frames.length - 1);
+        // commit snapshot for new frame
+        this.commitSnapshot('add-frame');
+        // ensure sidebar updates after frame creation/DOM paint
+        if(this.renderFramePreviews) requestAnimationFrame(()=> this.renderFramePreviews());
+    }
+
     undo() {
         if (this.vc.current <= 0) return;
-        const idx = this.vc.current - 1;
-        this.vc.loadCommit(idx, this.frame);
-        this._updateHistoryUI && this._updateHistoryUI();
+                const idx = this.vc.current - 1;
+                const commit = this.vc.commits[idx];
+                if (!commit) return;
+                // resolve target frame index robustly: prefer stable id, then stored index
+                let targetIndex = null;
+                if (commit.meta) {
+                    if (commit.meta.frameId) {
+                        const found = this.frames.findIndex(f => f && f._id === commit.meta.frameId);
+                        if (found !== -1) targetIndex = found;
+                    }
+                    if (targetIndex === null && typeof commit.meta.frameIndex === 'number') {
+                        if (commit.meta.frameIndex >= 0 && commit.meta.frameIndex < this.frames.length) targetIndex = commit.meta.frameIndex;
+                    }
+                }
+                if (targetIndex === null) targetIndex = Math.min(Math.max(0, this.currentFrameIndex), this.frames.length - 1);
+                const targetFrame = this.frames[targetIndex];
+                if (!targetFrame) return;
+                this.vc.loadCommit(idx, targetFrame);
+                // switch to the frame that was edited by this commit
+                this.selectFrame(targetIndex);
+                this._updateHistoryUI && this._updateHistoryUI();
+                // update previews to reflect the undone state
+                if (this.renderFramePreviews) requestAnimationFrame(() => this.renderFramePreviews());
     }
 
     redo() {
         if (this.vc.current >= this.vc.commits.length - 1) return;
-        const idx = this.vc.current + 1;
-        this.vc.loadCommit(idx, this.frame);
-        this._updateHistoryUI && this._updateHistoryUI();
+                const idx = this.vc.current + 1;
+                const commit = this.vc.commits[idx];
+                if (!commit) return;
+                let targetIndex = null;
+                if (commit.meta) {
+                    if (commit.meta.frameId) {
+                        const found = this.frames.findIndex(f => f && f._id === commit.meta.frameId);
+                        if (found !== -1) targetIndex = found;
+                    }
+                    if (targetIndex === null && typeof commit.meta.frameIndex === 'number') {
+                        if (commit.meta.frameIndex >= 0 && commit.meta.frameIndex < this.frames.length) targetIndex = commit.meta.frameIndex;
+                    }
+                }
+                if (targetIndex === null) targetIndex = Math.min(Math.max(0, this.currentFrameIndex), this.frames.length - 1);
+                const targetFrame = this.frames[targetIndex];
+                if (!targetFrame) return;
+                this.vc.loadCommit(idx, targetFrame);
+                this.selectFrame(targetIndex);
+                this._updateHistoryUI && this._updateHistoryUI();
+                if (this.renderFramePreviews) requestAnimationFrame(() => this.renderFramePreviews());
     }
 
 }
@@ -316,6 +417,10 @@ if(program.eyedropBtn) setIconMaskColor(program.eyedropBtn, program.colorInput.v
 program.colorInput.addEventListener('input', ()=>{
     if(program.fillBtn) setIconMaskColor(program.fillBtn, program.colorInput.value);
 });
+// wire frames sidebar
+const addFrameBtn = document.getElementById('add-frame');
+if(addFrameBtn) addFrameBtn.addEventListener('click', ()=> program.addFrame());
+program.renderFramePreviews();
 // set initial undo/redo visual state
 program._updateHistoryUI && program._updateHistoryUI();
 program.loop();
