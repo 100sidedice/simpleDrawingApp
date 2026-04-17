@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Simple Full-Screen Canvas</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="toolbar" role="toolbar" aria-label="Canvas controls">
+    <label>Color <input id="color" type="color" value="#000000"></label>
+    <label>Size <input id="size" type="range" min="1" max="48" value="4"></label>
+    <button id="tool-pencil" class="icon" data-col="0" data-row="0" aria-label="Pencil" title="Pencil"></button>
+    <button id="tool-fill" class="icon" data-col="1" data-row="1" aria-label="Fill" title="Fill"></button>
+    <button id="tool-eyedrop" class="icon" data-col="3" data-row="2" aria-label="Eyedropper" title="Eyedropper"></button>
+    <button id="tool-erase" class="icon" data-col="3" data-row="3" aria-label="Erase" title="Erase"></button>
+    <button id="undo">Undo</button>
+    <button id="redo">Redo</button>
+    <button id="clear">Clear</button>
+  </div>
+  <canvas id="draw" aria-label="Drawing canvas"></canvas>
+  <script type="module" src="src/icons.js"></script>
+  <script src="src/main.js" type="module"></script>
+</body>
+</html>
