@@ -2,6 +2,7 @@ import Input from './input.js';
 import UI from './ui.js';
 import Frame from './frame.js';
 import VersionControl from './versionControl.js';
+import { setupIcons, setIconMaskColor, setAllMaskColors } from './icons.js';
 
 
 class Program {
@@ -42,6 +43,16 @@ class Program {
         if (this.eyedropBtn) this.eyedropBtn.addEventListener('click', ()=> this.selectTool('eyedrop'));
         if (this.eraseBtn) this.eraseBtn.addEventListener('click', ()=> this.selectTool('erase'));
         this._updateToolUI();
+
+                // icon setup and initial mask colors
+                setupIcons();
+                if(this.fillBtn) setIconMaskColor(this.fillBtn, this.colorInput.value);
+                if(this.eyedropBtn) setIconMaskColor(this.eyedropBtn, this.colorInput.value);
+                this.colorInput.addEventListener('input', ()=>{
+                    if(this.fillBtn) setIconMaskColor(this.fillBtn, this.colorInput.value);
+                });
+
+                this._eyedropPreviewHandler = null;
 
         // initial commit
         syncDisplaySize(this.canvas);
@@ -167,6 +178,26 @@ class Program {
     selectTool(t) {
         this.tool = t;
         this._updateToolUI();
+        // if eyedrop selected, preview sampled color on the eyedrop icon
+        if(t === 'eyedrop'){
+            if(this._eyedropPreviewHandler) this.canvas.removeEventListener('pointermove', this._eyedropPreviewHandler);
+            this._eyedropPreviewHandler = (ev)=>{
+                const rect = this.canvas.getBoundingClientRect();
+                const DPR = window.devicePixelRatio || 1;
+                const x = Math.round((ev.clientX - rect.left) * DPR);
+                const y = Math.round((ev.clientY - rect.top) * DPR);
+                const px = this.frame.samplePixel(x, y);
+                const hex = rgbaToHex(px);
+                if(this.eyedropBtn) setIconMaskColor(this.eyedropBtn, hex);
+            };
+            this.canvas.addEventListener('pointermove', this._eyedropPreviewHandler);
+        } else {
+            if(this._eyedropPreviewHandler){
+                this.canvas.removeEventListener('pointermove', this._eyedropPreviewHandler);
+                this._eyedropPreviewHandler = null;
+                if(this.eyedropBtn) setIconMaskColor(this.eyedropBtn, this.colorInput.value);
+            }
+        }
     }
 
     _updateToolUI() {

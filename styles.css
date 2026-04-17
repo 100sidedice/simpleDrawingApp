@@ -18,7 +18,7 @@ body{
 }
 .toolbar{
   position:fixed;
-  top:10px;
+  bottom:10px;
   left:50%;
   transform:translateX(-50%);
   background:rgba(255,255,255,0.9);
@@ -39,7 +39,8 @@ button{cursor:pointer}
   width:36px;
   height:36px;
   display:inline-block;
-  background-image: url('icons2.png');
+  position:relative;
+  background-image: var(--icons-image, url('drawingIcons.png'));
   background-repeat: no-repeat;
   background-position: 0 0;
   background-size: auto;
@@ -56,6 +57,25 @@ button{cursor:pointer}
   box-shadow: 0 3px 8px rgba(34,2,54,0.12);
   border-radius: 8px;
   transform: translateY(-1px);
+}
+
+/* deselected icons should appear grayscaled */
+.icon:not(.active) {
+  filter: grayscale(100%);
+  opacity: 0.95;
+}
+
+/* mask overlay for icons that support coloring (created by JS) */
+.icon__mask{
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  background-image: var(--icons-image, url('drawingIcons.png'));
+  background-repeat:no-repeat;
+  background-size: inherit; /* JS sets explicit sizes on both elements */
+  mix-blend-mode: multiply;
+  opacity: 1;
+  border-radius: 6px;
 }
 
 /* Mobile portrait toolbar: full-width top bar, touch-friendly */
