@@ -27,6 +27,9 @@ class Program {
         this.input = new Input(this.canvas);
         this.ui = new UI(this.input);
 
+        // commit history panel (on-screen diagnostics)
+        this._vcHistory = null;
+
         // frames list (animation frames)
         this.frames = [];
         this.currentFrameIndex = 0;
@@ -97,6 +100,40 @@ class Program {
         });
     }
 
+    // render an on-screen commit history to help debug undo/redo ordering
+    renderCommitHistory() {
+        const existing = document.getElementById('vc-history');
+        if (existing) existing.remove();
+        const container = document.createElement('div');
+        container.id = 'vc-history';
+        container.className = 'vc-history';
+        const header = document.createElement('div'); header.className = 'vc-history-header'; header.textContent = 'Commits';
+        container.appendChild(header);
+        const list = document.createElement('div'); list.className = 'vc-history-list';
+        const commits = this.vc.getCommits();
+        commits.forEach(c => {
+          const el = document.createElement('div');
+          el.className = 'vc-history-item' + (this.vc.current === c.index ? ' current' : '');
+          const id = (c.meta && c.meta.frameId) ? String(c.meta.frameId).slice(0,8) : String(c.index);
+          el.textContent = `#${c.index} ${c.message || ''} frameIndex:${(c.meta && typeof c.meta.frameIndex === 'number') ? c.meta.frameIndex : '-'} id:${id}`;
+          list.appendChild(el);
+        });
+                container.appendChild(list);
+                // also show current frames and their ids for verification
+                const framesDiv = document.createElement('div');
+                framesDiv.className = 'vc-frames-list';
+                framesDiv.style.padding = '6px 8px';
+                framesDiv.style.borderTop = '1px solid rgba(255,255,255,0.04)';
+                const fheader = document.createElement('div'); fheader.style.fontWeight = '600'; fheader.textContent = 'Frames'; framesDiv.appendChild(fheader);
+                this.frames.forEach((f, i) => {
+                    const fe = document.createElement('div');
+                    fe.textContent = `#${i} id:${f && f._id ? String(f._id).slice(0,12) : 'none'}`;
+                    framesDiv.appendChild(fe);
+                });
+                container.appendChild(framesDiv);
+        document.body.appendChild(container);
+    }
+
     
     loop() {
         const dt = (Date.now() - this.lastFrameTime) / 1000;
@@ -119,12 +156,14 @@ class Program {
     render(){ this.draw(); }
 
     commitSnapshot(message) {
-        // include current frame index and stable frame id so undo/redo can restore the correct frame
-        const meta = { frameIndex: this.currentFrameIndex, frameId: this.frame && this.frame._id };
-        this.vc.commit(this.frame, message || 'snapshot', meta);
+        // snapshot entire project state (all frames)
+        const meta = { frameIndex: this.currentFrameIndex };
+        this.vc.commitProject(this, message || 'snapshot', meta);
         this._updateHistoryUI && this._updateHistoryUI();
         // refresh frame thumbnails so latest frame state appears in sidebar
         if(this.renderFramePreviews) requestAnimationFrame(()=> this.renderFramePreviews());
+        // update commit history panel for debugging
+        if (this.renderCommitHistory) this.renderCommitHistory();
     }
     handleDown({ event }) {
         // tool-specific down behavior
@@ -342,54 +381,31 @@ class Program {
     }
 
     undo() {
-        if (this.vc.current <= 0) return;
-                const idx = this.vc.current - 1;
-                const commit = this.vc.commits[idx];
-                if (!commit) return;
-                // resolve target frame index robustly: prefer stable id, then stored index
-                let targetIndex = null;
-                if (commit.meta) {
-                    if (commit.meta.frameId) {
-                        const found = this.frames.findIndex(f => f && f._id === commit.meta.frameId);
-                        if (found !== -1) targetIndex = found;
-                    }
-                    if (targetIndex === null && typeof commit.meta.frameIndex === 'number') {
-                        if (commit.meta.frameIndex >= 0 && commit.meta.frameIndex < this.frames.length) targetIndex = commit.meta.frameIndex;
-                    }
-                }
-                if (targetIndex === null) targetIndex = Math.min(Math.max(0, this.currentFrameIndex), this.frames.length - 1);
-                const targetFrame = this.frames[targetIndex];
-                if (!targetFrame) return;
-                this.vc.loadCommit(idx, targetFrame);
-                // switch to the frame that was edited by this commit
-                this.selectFrame(targetIndex);
-                this._updateHistoryUI && this._updateHistoryUI();
-                // update previews to reflect the undone state
-                if (this.renderFramePreviews) requestAnimationFrame(() => this.renderFramePreviews());
+        const idx = this.vc.undo();
+        if (idx === -1) return;
+        // restore full project snapshot
+        try {
+            this.vc.loadCommit(idx, this);
+        } catch (e) {
+            // fallback: if loading as project failed, do nothing
+            return;
+        }
+        this._updateHistoryUI && this._updateHistoryUI();
+        if (this.renderFramePreviews) requestAnimationFrame(() => this.renderFramePreviews());
+        if (this.renderCommitHistory) this.renderCommitHistory();
     }
 
     redo() {
-        if (this.vc.current >= this.vc.commits.length - 1) return;
-                const idx = this.vc.current + 1;
-                const commit = this.vc.commits[idx];
-                if (!commit) return;
-                let targetIndex = null;
-                if (commit.meta) {
-                    if (commit.meta.frameId) {
-                        const found = this.frames.findIndex(f => f && f._id === commit.meta.frameId);
-                        if (found !== -1) targetIndex = found;
-                    }
-                    if (targetIndex === null && typeof commit.meta.frameIndex === 'number') {
-                        if (commit.meta.frameIndex >= 0 && commit.meta.frameIndex < this.frames.length) targetIndex = commit.meta.frameIndex;
-                    }
-                }
-                if (targetIndex === null) targetIndex = Math.min(Math.max(0, this.currentFrameIndex), this.frames.length - 1);
-                const targetFrame = this.frames[targetIndex];
-                if (!targetFrame) return;
-                this.vc.loadCommit(idx, targetFrame);
-                this.selectFrame(targetIndex);
-                this._updateHistoryUI && this._updateHistoryUI();
-                if (this.renderFramePreviews) requestAnimationFrame(() => this.renderFramePreviews());
+        const idx = this.vc.redo();
+        if (idx === -1) return;
+        try {
+            this.vc.loadCommit(idx, this);
+        } catch (e) {
+            return;
+        }
+        this._updateHistoryUI && this._updateHistoryUI();
+        if (this.renderFramePreviews) requestAnimationFrame(() => this.renderFramePreviews());
+        if (this.renderCommitHistory) this.renderCommitHistory();
     }
 
 }

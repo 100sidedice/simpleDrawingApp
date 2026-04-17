@@ -88,6 +88,30 @@ button{cursor:pointer}
   box-sizing: border-box;
 }
 
+/* Commit history panel for debugging undo/redo ordering */
+.vc-history{
+  position: fixed;
+  right: 8px;
+  bottom: 8px;
+  width: 300px;
+  max-height: 240px;
+  background: rgba(0,0,0,0.7);
+  color: #fff;
+  font-family: system-ui, Arial, sans-serif;
+  font-size: 12px;
+  border-radius: 6px;
+  overflow: hidden;
+  z-index: 9999;
+}
+.vc-history-header{
+  padding: 6px 8px;
+  font-weight: 600;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.vc-history-list{ padding: 6px 8px; overflow-y: auto; max-height: 200px; }
+.vc-history-item{ padding: 4px 0; opacity: 0.9; }
+.vc-history-item.current{ background: rgba(255,255,255,0.06); padding-left: 4px; }
+
 /* Frames sidebar */
 .frames-sidebar{
   position:fixed;
