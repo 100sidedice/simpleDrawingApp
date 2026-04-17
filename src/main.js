@@ -2,7 +2,7 @@ import Input from './input.js';
 import UI from './ui.js';
 import Frame from './frame.js';
 import VersionControl from './versionControl.js';
-import { setupIcons, setIconMaskColor, setAllMaskColors } from './icons.js';
+import { preload, setupIcons, setIconMaskColor, setAllMaskColors, refreshIcons } from './icons.js';
 
 
 class Program {
@@ -32,6 +32,35 @@ class Program {
         this.tool = 'pencil';
         this._hasDrawnDuringStroke = false;
 
+        // brush cursor overlay
+        this._brushCursor = document.createElement('div');
+        this._brushCursor.className = 'brush-cursor';
+        document.body.appendChild(this._brushCursor);
+        this._onCanvasPointerMoveForCursor = (ev) => {
+            const rect = this.canvas.getBoundingClientRect();
+            // position at pointer
+            const x = ev.clientX;
+            const y = ev.clientY;
+            this._brushCursor.style.left = x + 'px';
+            this._brushCursor.style.top = y + 'px';
+            // size in CSS pixels (size input is CSS px)
+            const sizeCss = Number(this.sizeInput?.value) || 4;
+            this._brushCursor.style.width = sizeCss + 'px';
+            this._brushCursor.style.height = sizeCss + 'px';
+        };
+        // show/hide on enter/leave
+        this.canvas.addEventListener('pointerenter', ()=>{
+            if(this.tool === 'pencil' || this.tool === 'erase') this._brushCursor.style.display = 'block';
+        });
+        this.canvas.addEventListener('pointerleave', ()=>{ this._brushCursor.style.display = 'none'; });
+        this.canvas.addEventListener('pointermove', this._onCanvasPointerMoveForCursor);
+        // update cursor size live when slider changes
+        this.sizeInput?.addEventListener('input', ()=>{
+            const sizeCss = Number(this.sizeInput.value) || 4;
+            this._brushCursor.style.width = sizeCss + 'px';
+            this._brushCursor.style.height = sizeCss + 'px';
+        });
+
         // wire actions via UI
         this.ui.addAction('draw', 'down', this.handleDown.bind(this));
         this.ui.addAction('draw', 'move', this.handleMove.bind(this));
@@ -44,15 +73,8 @@ class Program {
         if (this.eraseBtn) this.eraseBtn.addEventListener('click', ()=> this.selectTool('erase'));
         this._updateToolUI();
 
-                // icon setup and initial mask colors
-                setupIcons();
-                if(this.fillBtn) setIconMaskColor(this.fillBtn, this.colorInput.value);
-                if(this.eyedropBtn) setIconMaskColor(this.eyedropBtn, this.colorInput.value);
-                this.colorInput.addEventListener('input', ()=>{
-                    if(this.fillBtn) setIconMaskColor(this.fillBtn, this.colorInput.value);
-                });
-
-                this._eyedropPreviewHandler = null;
+        // eyeddrop handler placeholder (preload happens before construction)
+        this._eyedropPreviewHandler = null;
 
         // initial commit
         syncDisplaySize(this.canvas);
@@ -68,6 +90,8 @@ class Program {
             this.render();
         });
     }
+
+    
     loop() {
         const dt = (Date.now() - this.lastFrameTime) / 1000;
         this.lastFrameTime = Date.now();
@@ -87,6 +111,7 @@ class Program {
 
     commitSnapshot(message) {
         this.vc.commit(this.frame, message || 'snapshot');
+        this._updateHistoryUI && this._updateHistoryUI();
     }
     handleDown({ event }) {
         // tool-specific down behavior
@@ -171,6 +196,8 @@ class Program {
                 this.commitSnapshot('after-stroke');
     }
     clearAll() {
+        const ok = window.confirm('Are you sure you want to clear the canvas? This cannot be undone.');
+        if (!ok) return;
         this.frame.clear();
         this.commitSnapshot('clear');
     }
@@ -198,24 +225,70 @@ class Program {
                 if(this.eyedropBtn) setIconMaskColor(this.eyedropBtn, this.colorInput.value);
             }
         }
+                // show/hide brush cursor depending on tool
+                if(this._brushCursor){
+                    if(t === 'pencil' || t === 'erase'){
+                        this._brushCursor.style.display = 'block';
+                    } else {
+                        this._brushCursor.style.display = 'none';
+                    }
+                }
     }
 
     _updateToolUI() {
         const map = { pencil: this.pencilBtn, fill: this.fillBtn, eyedrop: this.eyedropBtn, erase: this.eraseBtn };
         Object.values(map).forEach(b => { if (b) b.classList.remove('active'); });
         const active = map[this.tool]; if (active) active.classList.add('active');
+        // re-render icons to reflect active/grayscale state
+        refreshIcons();
+    }
+
+    _updateHistoryUI(){
+        if(this.undoBtn){
+            if(this.vc.current <= 0){
+                this.undoBtn.dataset.col = '0';
+                this.undoBtn.dataset.row = '3';
+                this.undoBtn.classList.add('disabled');
+                this.undoBtn.setAttribute('aria-disabled','true');
+                this.undoBtn.tabIndex = -1;
+            } else {
+                this.undoBtn.dataset.col = '0';
+                this.undoBtn.dataset.row = '2';
+                this.undoBtn.classList.remove('disabled');
+                this.undoBtn.removeAttribute('aria-disabled');
+                this.undoBtn.tabIndex = 0;
+            }
+        }
+        if(this.redoBtn){
+            if(this.vc.current >= this.vc.commits.length - 1){
+                this.redoBtn.dataset.col = '1';
+                this.redoBtn.dataset.row = '3';
+                this.redoBtn.classList.add('disabled');
+                this.redoBtn.setAttribute('aria-disabled','true');
+                this.redoBtn.tabIndex = -1;
+            } else {
+                this.redoBtn.dataset.col = '1';
+                this.redoBtn.dataset.row = '2';
+                this.redoBtn.classList.remove('disabled');
+                this.redoBtn.removeAttribute('aria-disabled');
+                this.redoBtn.tabIndex = 0;
+            }
+        }
+        refreshIcons();
     }
 
     undo() {
         if (this.vc.current <= 0) return;
         const idx = this.vc.current - 1;
         this.vc.loadCommit(idx, this.frame);
+        this._updateHistoryUI && this._updateHistoryUI();
     }
 
     redo() {
         if (this.vc.current >= this.vc.commits.length - 1) return;
         const idx = this.vc.current + 1;
         this.vc.loadCommit(idx, this.frame);
+        this._updateHistoryUI && this._updateHistoryUI();
     }
 
 }
@@ -233,7 +306,18 @@ function syncDisplaySize(canvas) {
   canvas.height = Math.round(cssH * dpr);
 }
 
+// preload sprite first, then construct program so constructor runs after resources ready
+await preload('drawingIcons.png', 4, 4).catch(e=>console.warn('icon preload failed', e));
 const program = new Program();
+// initialize icons and mask colors now that sprite tiles are cached
+setupIcons();
+if(program.fillBtn) setIconMaskColor(program.fillBtn, program.colorInput.value);
+if(program.eyedropBtn) setIconMaskColor(program.eyedropBtn, program.colorInput.value);
+program.colorInput.addEventListener('input', ()=>{
+    if(program.fillBtn) setIconMaskColor(program.fillBtn, program.colorInput.value);
+});
+// set initial undo/redo visual state
+program._updateHistoryUI && program._updateHistoryUI();
 program.loop();
 
 // helpers

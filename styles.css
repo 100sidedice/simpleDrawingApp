@@ -14,7 +14,8 @@ body{
   height:100%;
   display:block;
   touch-action: none;
-  cursor: crosshair;
+  /* hide native cursor over canvas so custom brush cursor is used */
+  cursor: none;
 }
 .toolbar{
   position:fixed;
@@ -40,10 +41,7 @@ button{cursor:pointer}
   height:36px;
   display:inline-block;
   position:relative;
-  background-image: var(--icons-image, url('drawingIcons.png'));
-  background-repeat: no-repeat;
-  background-position: 0 0;
-  background-size: auto;
+  overflow: hidden;
   border: none;
   padding: 0;
   margin: 0 4px;
@@ -70,12 +68,24 @@ button{cursor:pointer}
   position:absolute;
   inset:0;
   pointer-events:none;
-  background-image: var(--icons-image, url('drawingIcons.png'));
-  background-repeat:no-repeat;
-  background-size: inherit; /* JS sets explicit sizes on both elements */
   mix-blend-mode: multiply;
   opacity: 1;
   border-radius: 6px;
+}
+
+.icon__canvas{ width:100%; height:100%; display:block; }
+
+/* Circular brush cursor that follows the pointer */
+.brush-cursor{
+  position:fixed;
+  pointer-events:none;
+  z-index:9999;
+  border-radius:50%;
+  border:1px solid rgba(0,0,0,0.6);
+  background: rgba(0,0,0,0.03);
+  transform: translate(-50%,-50%);
+  display:none;
+  box-sizing: border-box;
 }
 
 /* Mobile portrait toolbar: full-width top bar, touch-friendly */
