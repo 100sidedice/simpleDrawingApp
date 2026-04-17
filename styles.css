@@ -35,6 +35,84 @@ body{
 .toolbar input[type="range"]{vertical-align:middle}
 button{cursor:pointer}
 
+/* Color trigger & picker styles */
+.color-trigger{width:36px;height:36px;border-radius:8px;border:none;padding:0;background:#fff;display:inline-flex;align-items:center;justify-content:center}
+.color-preview{width:20px;height:20px;border-radius:50%;display:block;border:1px solid rgba(0,0,0,0.08)}
+
+.color-picker{display:flex;gap:12px;padding:12px;align-items:center;}
+.color-picker{box-shadow:0 14px 40px rgba(0,0,0,0.35);border-radius:10px}
+.color-wheel{width:180px;height:180px;border-radius:50%;background:conic-gradient(from 90deg, red,#ff0,#0f0,#0ff,#00f,#f0f,red);position:relative;box-shadow:0 4px 16px rgba(0,0,0,0.12);cursor:crosshair}
+.color-wheel::after{content:'';position:absolute;inset:0;border-radius:50%;background:radial-gradient(transparent, rgba(0,0,0,0.15));pointer-events:none}
+.picker-marker{position:absolute;width:14px;height:14px;border-radius:50%;border:3px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.35);transform:translate(-50%,-50%);pointer-events:none}
+.color-sliders{display:flex;flex-direction:column;gap:8px}
+.color-sliders label{font-size:13px;display:flex;gap:8px;align-items:center}
+.color-sliders input[type=range]{width:200px;height:10px;border-radius:999px;-webkit-appearance:none;appearance:none;background:transparent}
+.color-sliders input[type=range]::-webkit-slider-runnable-track{height:10px;border-radius:999px}
+.color-sliders input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:#fff;border:2px solid rgba(0,0,0,0.12);box-shadow:0 2px 6px rgba(0,0,0,0.12);margin-top:-3px}
+.color-sliders input[type=range]::-moz-range-track{height:10px;border-radius:999px}
+.color-sliders input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:#fff;border:2px solid rgba(0,0,0,0.12);box-shadow:0 2px 6px rgba(0,0,0,0.12)}
+.color-picker-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:6px}
+
+/* ensure modal-dialog rules still center */
+.modal-dialog.color-picker{width:auto}
+
+.export-group{display:flex;gap:8px;align-items:center;margin-left:8px}
+.export-group button{padding:6px 8px;border-radius:6px;background:transparent;border:1px solid rgba(0,0,0,0.06)}
+
+/* File I/O panel (separate controls) */
+.file-io-panel{
+  position:fixed;
+  right:10px;
+  bottom:10px;
+  display:flex;
+  gap:8px;
+  align-items:center;
+  z-index:20;
+}
+.io-btn{padding:8px 10px;border-radius:8px;background:#fff;border:1px solid rgba(0,0,0,0.06);box-shadow:0 4px 12px rgba(0,0,0,0.06)}
+.menu{position:absolute;right:0;bottom:48px;background:#fff;border-radius:8px;padding:6px;box-shadow:0 6px 18px rgba(0,0,0,0.08);display:flex;flex-direction:column;gap:6px}
+.menu[hidden]{display:none}
+.menu button{padding:6px 10px;border:none;background:transparent;border-radius:6px;cursor:pointer}
+
+/* clear confirmation menu centered above toolbar */
+#clear-menu{position:fixed;left:50%;transform:translateX(-50%);bottom:64px;z-index:30}
+#clear-menu .menu{position:static;bottom:auto;right:auto;display:flex;flex-direction:row}
+#clear-menu button{padding:8px 12px}
+
+/* filename prompt at top center */
+.filename-prompt{
+  position:fixed;
+  top:12px;
+  left:50%;
+  transform:translateX(-50%);
+  background:#ffffff;
+  border-radius:8px;
+  padding:8px 10px;
+  box-shadow:0 6px 18px rgba(0,0,0,0.08);
+  display:flex;
+  gap:8px;
+  align-items:center;
+  z-index:60;
+}
+.filename-prompt input{padding:6px 8px;border:1px solid rgba(0,0,0,0.08);border-radius:6px;width:220px}
+.filename-prompt button{padding:6px 8px;border-radius:6px;background:#f3f3f3;border:1px solid rgba(0,0,0,0.06);cursor:pointer}
+.filename-prompt[hidden]{display:none}
+
+/* modal overlay for centered prompts */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:55}
+.modal-overlay[hidden]{display:none}
+
+/* center dialogs when they use modal-dialog */
+.modal-dialog{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);}
+.modal-dialog[hidden]{display:none}
+/* color picker should appear above toolbars but not use the dark overlay */
+.modal-dialog.color-picker{z-index:70}
+
+/* import choice uses same styling as filename prompt */
+/* keep layout to the shared `.filename-prompt` class; do not force display via ID
+  so the `[hidden]` attribute can hide it by default */
+/* the `.filename-prompt[hidden]{display:none}` rule will control visibility */
+
 /* Sprite-based icons (icons2.png) */
 .icon{
   width:36px;
@@ -126,11 +204,26 @@ button{cursor:pointer}
   overflow:auto;
   z-index:15;
 }
+/* Improve mobile touch behavior: prevent pull-to-refresh and text selection
+   within the frames sidebar, and ensure vertical panning only. */
+.frames-sidebar{
+  overscroll-behavior: contain;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
 .frames-controls{ display:flex; justify-content:center; margin-bottom:6px; }
 .frames-controls button{ width:32px; height:32px; border-radius:6px; }
-.frames-list{ display:flex; flex-direction:column; gap:6px; }
-.frame-thumb{ width:100%; height:72px; background:#fff; border-radius:6px; box-shadow:0 2px 6px rgba(0,0,0,0.06); overflow:hidden; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+.frames-list{ display:flex; flex-direction:column; gap:6px; 
+  touch-action: pan-y;
+  -webkit-user-drag: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.frame-thumb{ width:100%; height:72px; background:#fff; border-radius:6px; box-shadow:0 2px 6px rgba(0,0,0,0.06); overflow:hidden; display:flex; align-items:center; justify-content:center; cursor:pointer; -webkit-user-select:none; user-select:none; -webkit-user-drag:none; }
 .frame-thumb.selected{ outline:2px solid #7aa6ff; }
+.frames-list.selection-active .frame-thumb.selected{ outline:2px solid #4caf50; }
 .frame-thumb canvas{ width:100%; height:100%; display:block; object-fit:cover; }
 
 /* Mobile portrait toolbar: full-width top bar, touch-friendly */
@@ -164,3 +257,9 @@ button{cursor:pointer}
   /* move canvas under toolbar visually (no layout shift) */
   #draw{ top:44px; }
 }
+
+/* Remove tap highlight across the app to avoid the native flash on long-press. */
+*{ -webkit-tap-highlight-color: transparent; }
+
+/* Scroll gutter element (created dynamically) should not capture text selection */
+.frames-scroll-gutter{ -webkit-user-select:none; user-select:none; }

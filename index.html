@@ -5,10 +5,16 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Simple Full-Screen Canvas</title>
   <link rel="stylesheet" href="styles.css" />
+    <!-- jsPDF for PDF export, PDF.js for PDF import -->
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.14.305/pdf.min.js"></script>
 </head>
 <body>
   <div class="toolbar" role="toolbar" aria-label="Canvas controls">
-    <input id="color" type="color" value="#000000">
+    <input id="color" type="color" value="#000000" style="display:none">
+    <button id="color-trigger" class="color-trigger" aria-label="Color" title="Color">
+      <span id="color-preview" class="color-preview" style="background:#000000"></span>
+    </button>
     <input id="size" type="range" min="1" max="48" value="4">
     <button id="tool-pencil" class="icon" data-col="0" data-row="0" aria-label="Pencil" title="Pencil"></button>
     <button id="tool-erase" class="icon" data-col="1" data-row="0" aria-label="Erase" title="Erase"></button>
@@ -18,9 +24,66 @@
     <button id="redo" class="icon" data-col="1" data-row="2" aria-label="Redo" title="Redo"></button>
     <button id="clear" class="icon" data-col="2" data-row="2" aria-label="Clear" title="Clear"></button>
   </div>
+
+  <!-- File I/O panel (separate from toolbar) -->
+  <div class="file-io-panel" aria-label="File import export">
+    <button id="export" class="io-btn">Export</button>
+    <div id="export-menu" class="menu" hidden>
+      <button data-type="png">Export as PNG</button>
+      <button data-type="jpeg">Export as JPEG</button>
+      <button data-type="pdf">Export as PDF</button>
+    </div>
+
+    <button id="import" class="io-btn">Import</button>
+    <div id="import-menu" class="menu" hidden>
+      <button data-type="image">Import PNG/JPEG</button>
+      <button data-type="pdf">Import PDF</button>
+    </div>
+    <input id="import-input" type="file" accept="image/png,image/jpeg,application/pdf" style="display:none">
+  </div>
+
+  <!-- Clear confirmation menu (replaces window.confirm) -->
+  <div id="clear-menu" class="menu" hidden>
+    <button id="clear-yes">Clear canvas</button>
+    <button id="clear-cancel">Cancel</button>
+  </div>
+
+  <!-- Filename prompt (top center) -->
+  <div id="modal-overlay" class="modal-overlay" hidden></div>
+  <div id="filename-prompt" class="filename-prompt modal-dialog" hidden>
+    <label for="filename-input">Filename:</label>
+    <input id="filename-input" type="text" placeholder="drawing" />
+    <button id="filename-ok">OK</button>
+    <button id="filename-cancel">Cancel</button>
+  </div>
+
+  <!-- Import choice (append or overwrite) -->
+  <div id="import-choice" class="filename-prompt modal-dialog" hidden>
+    <span>Would you like to append or replace current project?</span>
+    <button id="import-append">Append</button>
+    <button id="import-overwrite">Replace</button>
+    <button id="import-cancel">Cancel</button>
+  </div>
+
+  <!-- Color picker modal -->
+  <div id="color-picker" class="color-picker modal-dialog" hidden>
+    <div id="color-wheel" class="color-wheel" role="application" aria-label="Hue and saturation selector">
+      <div class="picker-marker" id="picker-marker"></div>
+    </div>
+    <div class="color-sliders">
+      <label>Value <input id="color-value" type="range" min="0" max="100" value="100"></label>
+      <label>Alpha <input id="color-alpha" type="range" min="0" max="100" value="100"></label>
+      <div class="color-picker-actions">
+        <button id="color-ok">OK</button>
+        <button id="color-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
   <aside class="frames-sidebar" aria-label="Frames">
     <div class="frames-controls">
       <button id="add-frame" title="Add Frame">+</button>
+      <button id="dup-frame" title="Duplicate Selection">⧉</button>
+      <button id="del-frame" title="Delete Selection">🗑</button>
     </div>
     <div id="frames-list" class="frames-list"></div>
   </aside>
