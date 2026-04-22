@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <div id="frame-debug-top"></div>
   <div class="toolbar" role="toolbar" aria-label="Canvas controls">
     <input id="color" type="color" value="#000000">
     <input id="size" type="range" min="1" max="48" value="4">
@@ -21,6 +22,7 @@
   <aside class="frames-sidebar" aria-label="Frames">
     <div class="frames-controls">
       <button id="add-frame" title="Add Frame">+</button>
+      <span id="frame-counter" aria-live="polite" style="margin-left:8px;font-weight:600">1/1</span>
     </div>
     <div id="frames-list" class="frames-list"></div>
   </aside>

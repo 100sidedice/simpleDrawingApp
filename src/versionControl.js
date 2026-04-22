@@ -1,7 +1,14 @@
 import Frame from './frame.js';
 
-function cloneImageData(img) {
-    return new ImageData(new Uint8ClampedArray(img.data), img.width, img.height);
+function _cloneImageToPlain(img) {
+    // convert ImageData to plain serializable object
+    if (!img) return null;
+    return { width: img.width, height: img.height, data: new Uint8ClampedArray(img.data) };
+}
+
+function _plainToImageData(obj) {
+    if (!obj) return null;
+    return new ImageData(new Uint8ClampedArray(obj.data), obj.width, obj.height);
 }
 
 export default class VersionControl {
@@ -13,8 +20,8 @@ export default class VersionControl {
     // commitProject(program, message, meta) - snapshot entire project state (delta-encoded)
     commitProject(program, message = '', meta = {}) {
         if (!program || !Array.isArray(program.frames)) throw new Error('commitProject requires a program with frames[]');
-        // clone current frames into ImageData objects
-        const imgs = program.frames.map(f => (f instanceof Frame) ? cloneImageData(f.getImageData()) : null);
+        // clone current frames into plain serializable objects
+        const imgs = program.frames.map(f => (f instanceof Frame) ? _cloneImageToPlain(f.getImageData()) : null);
 
         // truncate future commits
         if (this.current < this.commits.length - 1) this.commits.splice(this.current + 1);
@@ -66,8 +73,9 @@ export default class VersionControl {
         const commit = this.commits[idx];
         if (!commit || !commit.snapshot) throw new Error('commit has no snapshot');
         if (!target || !Array.isArray(target.frames)) throw new Error('loadCommit requires a Program with frames[]');
-        // reconstruct full frames for this commit
-        const full = this._reconstructFrames(idx);
+        // reconstruct full frames for this commit (convert plain frames to ImageData)
+        const plain = this._reconstructFrames(idx);
+        const full = plain.map(p => _plainToImageData(p));
         // apply frames to program (create Frame instances as needed)
         for (let i = 0; i < full.length; i++) {
             const img = full[i];
@@ -105,23 +113,110 @@ export default class VersionControl {
         let base = index;
         while (base >= 0 && !(this.commits[base] && this.commits[base].snapshot && this.commits[base].snapshot.frames)) base--;
         if (base < 0) throw new Error('no base full snapshot found');
-        // clone base frames
-        const baseFrames = (this.commits[base].snapshot.frames || []).map(f => f ? cloneImageData(f) : null);
+        // clone base frames (plain objects)
+        const baseFrames = (this.commits[base].snapshot.frames || []).map(f => f ? { width: f.width, height: f.height, data: new Uint8ClampedArray(f.data) } : null);
         // apply deltas from base+1 .. index
         for (let i = base + 1; i <= index; i++) {
             const c = this.commits[i];
             if (!c || !c.snapshot) continue;
             const s = c.snapshot;
             if (s.frames) {
-                // full snapshot - replace
-                for (let j = 0; j < s.frames.length; j++) baseFrames[j] = s.frames[j] ? cloneImageData(s.frames[j]) : null;
+                // full snapshot - replace (plain objects)
+                for (let j = 0; j < s.frames.length; j++) baseFrames[j] = s.frames[j] ? { width: s.frames[j].width, height: s.frames[j].height, data: new Uint8ClampedArray(s.frames[j].data) } : null;
             } else if (s.deltas && Array.isArray(s.deltas)) {
                 for (const d of s.deltas) {
-                    baseFrames[d.index] = d.image ? cloneImageData(d.image) : null;
+                    baseFrames[d.index] = d.image ? { width: d.image.width, height: d.image.height, data: new Uint8ClampedArray(d.image.data) } : null;
                 }
             }
         }
         return baseFrames;
+    }
+
+    // Public helper: return plain frame object for given commit index and frame index
+    getPlainFrameAtCommit(commitIndex, frameIndex) {
+        try {
+            const idx = this._resolveIndex(commitIndex);
+            if (idx === -1) return null;
+            const frames = this._reconstructFrames(idx);
+            if (!frames || frameIndex < 0 || frameIndex >= frames.length) return null;
+            return frames[frameIndex] || null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    // IndexedDB persistence helpers
+    _openDB() {
+        return new Promise((resolve, reject) => {
+            const req = indexedDB.open('simpleDrawingApp', 1);
+            req.onupgradeneeded = (e) => {
+                const db = e.target.result;
+                try { db.createObjectStore('app'); } catch (err) {}
+            };
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    async _saveToIndexedDB() {
+        try {
+            const db = await this._openDB();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(['app'], 'readwrite');
+                const store = tx.objectStore('app');
+                const payload = { commits: this.commits, current: this.current };
+                const r = store.put(payload, 'versionControl');
+                r.onsuccess = () => { resolve(true); db.close(); };
+                r.onerror = () => { reject(r.error); db.close(); };
+            });
+        } catch (e) {
+            return false;
+        }
+    }
+
+    async loadFromIndexedDB(targetProgram) {
+        try {
+            const db = await this._openDB();
+            return await new Promise((resolve, reject) => {
+                const tx = db.transaction(['app'], 'readonly');
+                const store = tx.objectStore('app');
+                const r = store.get('versionControl');
+                r.onsuccess = async () => {
+                    const payload = r.result;
+                    db.close();
+                    if (!payload || !Array.isArray(payload.commits) || payload.commits.length === 0) return resolve(false);
+                    this.commits = payload.commits;
+                    this.current = typeof payload.current === 'number' ? payload.current : this.commits.length - 1;
+                    // apply the current commit to the provided program, if any
+                    if (targetProgram) {
+                        try { this.loadCommit(this.current, targetProgram); } catch (e) {}
+                    }
+                    resolve(true);
+                };
+                r.onerror = () => { db.close(); resolve(false); };
+            });
+        } catch (e) {
+            return false;
+        }
+    }
+
+    // Public API: trigger immediate save
+    async saveNow() {
+        try { await this._saveToIndexedDB(); } catch (e) {}
+    }
+
+    // Start periodic autosave (intervalMs defaults to 5000ms)
+    startAutoSave(intervalMs = 5000) {
+        this.stopAutoSave();
+        try {
+            this._autosaveIntervalId = setInterval(() => {
+                try { this._saveToIndexedDB(); } catch (e) {}
+            }, intervalMs);
+        } catch (e) {}
+    }
+
+    stopAutoSave() {
+        try { if (this._autosaveIntervalId) { clearInterval(this._autosaveIntervalId); this._autosaveIntervalId = null; } } catch (e) {}
     }
 
     _findNearestFull(index) {
