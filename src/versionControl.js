@@ -17,8 +17,9 @@ export default class VersionControl {
         this.current = -1; // index of current commit, -1 = none
     }
 
-    // commitProject(program, message, meta) - snapshot entire project state (delta-encoded)
-    commitProject(program, message = '', meta = {}) {
+    // commitProject(program, message, meta, precomputedDeltas) - snapshot entire project state (delta-encoded)
+    // If precomputedDeltas is provided, it should be an array of { index, image, bbox? }
+    commitProject(program, message = '', meta = {}, precomputedDeltas = null) {
         if (!program || !Array.isArray(program.frames)) throw new Error('commitProject requires a program with frames[]');
         // clone current frames into plain serializable objects
         const imgs = program.frames.map(f => (f instanceof Frame) ? _cloneImageToPlain(f.getImageData()) : null);
@@ -31,19 +32,24 @@ export default class VersionControl {
             // first commit - store full snapshot
             snapshot = { frames: imgs, deltas: null, baseIndex: null, currentFrameIndex: typeof program.currentFrameIndex === 'number' ? program.currentFrameIndex : 0 };
         } else {
-            // build deltas against reconstructed previous commit state
-            const prevFrames = this._reconstructFrames(this.current);
-            const deltas = [];
-            for (let i = 0; i < imgs.length; i++) {
-                const a = imgs[i];
-                const b = prevFrames[i];
-                const same = a && b && a.width === b.width && a.height === b.height && a.data.length === b.data.length && this._imageDataEquals(a, b);
-                if (!same) {
-                    deltas.push({ index: i, image: a });
+            // If caller provided precomputed small deltas (e.g., for a single-stroke), use them directly
+            if (precomputedDeltas && Array.isArray(precomputedDeltas) && precomputedDeltas.length) {
+                snapshot = { frames: null, deltas: precomputedDeltas, baseIndex: this._findNearestFull(this.current), currentFrameIndex: typeof program.currentFrameIndex === 'number' ? program.currentFrameIndex : 0 };
+            } else {
+                // build deltas against reconstructed previous commit state
+                const prevFrames = this._reconstructFrames(this.current);
+                const deltas = [];
+                for (let i = 0; i < imgs.length; i++) {
+                    const a = imgs[i];
+                    const b = prevFrames[i];
+                    const same = a && b && a.width === b.width && a.height === b.height && a.data.length === b.data.length && this._imageDataEquals(a, b);
+                    if (!same) {
+                        deltas.push({ index: i, image: a });
+                    }
                 }
+                // if no deltas, still create a no-op commit with empty deltas
+                snapshot = { frames: null, deltas: deltas, baseIndex: this._findNearestFull(this.current), currentFrameIndex: typeof program.currentFrameIndex === 'number' ? program.currentFrameIndex : 0 };
             }
-            // if no deltas, still create a no-op commit with empty deltas
-            snapshot = { frames: null, deltas: deltas, baseIndex: this._findNearestFull(this.current), currentFrameIndex: typeof program.currentFrameIndex === 'number' ? program.currentFrameIndex : 0 };
         }
 
         const commit = { id: String(Date.now()) + '-' + Math.random().toString(36).slice(2, 8), ts: Date.now(), message, snapshot, meta };
@@ -125,7 +131,40 @@ export default class VersionControl {
                 for (let j = 0; j < s.frames.length; j++) baseFrames[j] = s.frames[j] ? { width: s.frames[j].width, height: s.frames[j].height, data: new Uint8ClampedArray(s.frames[j].data) } : null;
             } else if (s.deltas && Array.isArray(s.deltas)) {
                 for (const d of s.deltas) {
-                    baseFrames[d.index] = d.image ? { width: d.image.width, height: d.image.height, data: new Uint8ClampedArray(d.image.data) } : null;
+                    if (!d || typeof d.index !== 'number') continue;
+                    // If delta provides a full image for the frame, replace it
+                    if (d.image && d.bbox == null && d.image.width === baseFrames[d.index].width && d.image.height === baseFrames[d.index].height) {
+                        baseFrames[d.index] = d.image ? { width: d.image.width, height: d.image.height, data: new Uint8ClampedArray(d.image.data) } : null;
+                        continue;
+                    }
+                    // Otherwise treat as a patch: copy delta image pixels into the base frame at bbox offsets
+                    if (d.image && d.bbox && baseFrames[d.index]) {
+                        const base = baseFrames[d.index];
+                        const bx = d.bbox[0];
+                        const by = d.bbox[1];
+                        const bw = d.bbox[2];
+                        const bh = d.bbox[3];
+                        // ensure sizes align
+                        if (base.width && base.height && bw > 0 && bh > 0) {
+                            const baseData = base.data;
+                            const patchData = new Uint8ClampedArray(d.image.data);
+                            for (let ry = 0; ry < bh; ry++) {
+                                const dstRow = (by + ry) * base.width;
+                                const srcRow = ry * bw;
+                                for (let rx = 0; rx < bw; rx++) {
+                                    const dstIdx = (dstRow + (bx + rx)) * 4;
+                                    const srcIdx = (srcRow + rx) * 4;
+                                    baseData[dstIdx] = patchData[srcIdx];
+                                    baseData[dstIdx + 1] = patchData[srcIdx + 1];
+                                    baseData[dstIdx + 2] = patchData[srcIdx + 2];
+                                    baseData[dstIdx + 3] = patchData[srcIdx + 3];
+                                }
+                            }
+                        }
+                    } else {
+                        // fallback: replace with provided image object
+                        baseFrames[d.index] = d.image ? { width: d.image.width, height: d.image.height, data: new Uint8ClampedArray(d.image.data) } : null;
+                    }
                 }
             }
         }

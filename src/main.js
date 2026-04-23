@@ -111,6 +111,9 @@ class Program {
         this.ui.addAction('draw', 'move', this.handleMove.bind(this));
         this.ui.addAction('draw', 'up', this.handleUp.bind(this));
 
+        // stroke dirty rect (CSS pixels) tracked during a stroke to create small deltas for VC
+        this._strokeDirtyRect = null; // [minX,minY,maxX,maxY] in CSS pixels
+
         // tool buttons
         if (this.pencilBtn) this.pencilBtn.addEventListener('click', ()=> this.selectTool('pencil'));
         if (this.fillBtn) this.fillBtn.addEventListener('click', ()=> this.selectTool('fill'));
@@ -192,10 +195,10 @@ class Program {
     // compatibility: render alias used in several places
     render(){ this.draw(); }
 
-    commitSnapshot(message) {
+    commitSnapshot(message, precomputedDeltas = null) {
         // snapshot entire project state (all frames)
         const meta = { frameIndex: this.currentFrameIndex };
-        this.vc.commitProject(this, message || 'snapshot', meta);
+        this.vc.commitProject(this, message || 'snapshot', meta, precomputedDeltas);
         this._updateHistoryUI && this._updateHistoryUI();
         // refresh frame thumbnails so latest frame state appears in sidebar
         if(this.renderFramePreviews) requestAnimationFrame(()=> this.renderFramePreviews());
@@ -207,7 +210,7 @@ class Program {
         // Map slider value to squared size for better large-range control
         const v = Number(this.sizeInput?.value) || 4;
         // ensure at least 1px
-        const size = Math.max(1, Math.round(v ** 1.2));
+        const size = 1+(1/10)*v**2;
         return size;
     }
 
@@ -251,6 +254,11 @@ class Program {
         this.drawing = true;
         this.lastPositions = (event.positions || [[event.clientX, event.clientY]]).map(p => [p[0], p[1]]);
         this._hasDrawnDuringStroke = false;
+        // start dirty rect tracking
+        try {
+            const first = (event.positions && event.positions[0]) || [event.clientX, event.clientY];
+            this._strokeDirtyRect = [first[0], first[1], first[0], first[1]];
+        } catch (e) { this._strokeDirtyRect = null; }
         // commit will be done after stroke
         // start hold-to-erase detection (only for pencil tool)
         try {
@@ -288,12 +296,53 @@ class Program {
             }
         } catch (e) { this._clearHoldEraseTimer(); }
         const DPR = window.devicePixelRatio || 1;
-        const positions = event.positions || [[event.clientX, event.clientY]];
         const color = this.colorInput.value || '#000';
         const widthCss = this._computeBrushSize();
         const width = widthCss * DPR; // convert to device pixels
+
+        // Update dirty rect from incoming points (CSS pixels)
+        try {
+            const ptsForDirty = (event.interpreted && Array.isArray(event.interpreted.points) && event.interpreted.points.length) ? event.interpreted.points.map(p=>[p[0],p[1]]) : (event.positions || [[event.clientX,event.clientY]]);
+            if (this._strokeDirtyRect && ptsForDirty && ptsForDirty.length) {
+                for (const p of ptsForDirty) {
+                    const x = p[0], y = p[1];
+                    if (x < this._strokeDirtyRect[0]) this._strokeDirtyRect[0] = x;
+                    if (y < this._strokeDirtyRect[1]) this._strokeDirtyRect[1] = y;
+                    if (x > this._strokeDirtyRect[2]) this._strokeDirtyRect[2] = x;
+                    if (y > this._strokeDirtyRect[3]) this._strokeDirtyRect[3] = y;
+                }
+            }
+        } catch (e) {}
+
+        // If input provided an interpreted path (smoothed Bezier samples), consume it
+        if (event.interpreted && Array.isArray(event.interpreted.points) && event.interpreted.points.length) {
+            const pts = event.interpreted.points.map(p => [p[0], p[1]]);
+            // draw from previous last position (if any) into the path, then along the path
+            const prev = (this.lastPositions && this.lastPositions[0]) ? this.lastPositions[0] : pts[0];
+            // first segment
+            if (this.tool === 'erase') {
+                this.frame.drawLine(Math.round(prev[0] * DPR), Math.round(prev[1] * DPR), Math.round(pts[0][0] * DPR), Math.round(pts[0][1] * DPR), { width, composite: 'destination-out' });
+            } else {
+                this.frame.drawLine(Math.round(prev[0] * DPR), Math.round(prev[1] * DPR), Math.round(pts[0][0] * DPR), Math.round(pts[0][1] * DPR), { color, width });
+            }
+            for (let i = 1; i < pts.length; i++) {
+                const a = pts[i-1];
+                const b = pts[i];
+                if (this.tool === 'erase') {
+                    this.frame.drawLine(Math.round(a[0] * DPR), Math.round(a[1] * DPR), Math.round(b[0] * DPR), Math.round(b[1] * DPR), { width, composite: 'destination-out' });
+                } else {
+                    this.frame.drawLine(Math.round(a[0] * DPR), Math.round(a[1] * DPR), Math.round(b[0] * DPR), Math.round(b[1] * DPR), { color, width });
+                }
+            }
+            this._hasDrawnDuringStroke = true;
+            // keep last position as the final sampled point
+            this.lastPositions = [[ pts[pts.length - 1][0], pts[pts.length - 1][1] ]];
+            return;
+        }
+
+        const positions = event.positions || [[event.clientX, event.clientY]];
         const n = Math.min(this.lastPositions.length, positions.length);
-                for (let i = 0; i < n; i++) {
+        for (let i = 0; i < n; i++) {
             const a = this.lastPositions[i];
             const b = positions[i];
             // convert CSS positions to device pixels
@@ -336,8 +385,36 @@ class Program {
                 }
                 this.drawing = false;
                 this._hasDrawnDuringStroke = false;
-                // commit after stroke
-                this.commitSnapshot('after-stroke');
+                // commit after stroke - create a small delta snapshot if possible to avoid full-frame copies
+                try {
+                    if (this._strokeDirtyRect) {
+                        const rect = this._strokeDirtyRect; // CSS pixels
+                        // pad rect by brush size to ensure full stroke captured
+                        const pad = Math.max(4, Math.round(this._computeBrushSize() * 1.5));
+                        const left = Math.floor(Math.min(rect[0], rect[2]) - pad);
+                        const top = Math.floor(Math.min(rect[1], rect[3]) - pad);
+                        const right = Math.ceil(Math.max(rect[0], rect[2]) + pad);
+                        const bottom = Math.ceil(Math.max(rect[1], rect[3]) + pad);
+                        const cssW = right - left;
+                        const cssH = bottom - top;
+                        if (cssW > 0 && cssH > 0) {
+                            const x = Math.round(left * DPR);
+                            const y = Math.round(top * DPR);
+                            const w = Math.max(1, Math.round(cssW * DPR));
+                            const h = Math.max(1, Math.round(cssH * DPR));
+                            // extract device-pixel ImageData for this rect
+                            const img = this.frame.ctx.getImageData(x, y, w, h);
+                            // convert to plain serializable object like VC expects
+                            const plain = { width: img.width, height: img.height, data: new Uint8ClampedArray(img.data) };
+                            const deltas = [{ index: this.currentFrameIndex, image: plain, bbox: [x,y,w,h] }];
+                            this.commitSnapshot('after-stroke', deltas);
+                        } else {
+                            this.commitSnapshot('after-stroke');
+                        }
+                    } else {
+                        this.commitSnapshot('after-stroke');
+                    }
+                } catch (e) { this.commitSnapshot('after-stroke'); }
                 // clear any hold timer and restore tool if we switched to erase
                 if (this._holdEraseActive) {
                     try {
@@ -686,6 +763,32 @@ function syncDisplaySize(canvas) {
 // preload sprite first, then construct program so constructor runs after resources ready
 await preload('drawingIcons.png', 4, 4).catch(e=>console.warn('icon preload failed', e));
 const program = new Program();
+// Prototype: Offload stroke drawing to a worker using OffscreenCanvas when available
+let drawWorker = null;
+try {
+    if (window.Worker && HTMLCanvasElement.prototype.transferControlToOffscreen) {
+        drawWorker = new Worker(new URL('./drawWorker.js', import.meta.url), { type: 'module' });
+        const off = program.canvas.transferControlToOffscreen();
+        drawWorker.postMessage({ type: 'init', canvas: off, dpr: window.devicePixelRatio || 1 }, [off]);
+        // wrap frame drawing methods to post commands to worker
+        const postDraw = (cmd) => { try { drawWorker.postMessage(cmd); } catch (e) {} };
+        // override drawLine/clear/fill to send to worker in device pixels
+        program.frame._origDrawLine = program.frame.drawLine.bind(program.frame);
+        program.frame.drawLine = (x1,y1,x2,y2,style={}) => {
+            postDraw({ type: 'drawLine', x1, y1, x2, y2, style });
+        };
+        program.frame._origClear = program.frame.clear.bind(program.frame);
+        program.frame.clear = () => { postDraw({ type: 'clear' }); };
+        program.frame._origFill = program.frame.fill.bind(program.frame);
+        program.frame.fill = (x,y,colorRGBA) => {
+            // Postpone full flood-fill to main thread; draw a placeholder circle locally in worker for immediate feedback
+            const rgba = `rgba(${colorRGBA[0]},${colorRGBA[1]},${colorRGBA[2]},${(colorRGBA[3]||255)/255})`;
+            postDraw({ type: 'drawLine', x1:x, y1:y, x2:x+1, y2:y+1, style: { color: rgba, width: 1 } });
+            // Also call original fill to keep main state (optional)
+            try { program.frame._origFill(x,y,colorRGBA); } catch (e) {}
+        };
+    }
+} catch (e) {}
 // attempt to restore persisted version control state (undo history + frames)
 const restored = await program.vc.loadFromIndexedDB(program).catch(()=>false);
 if (!restored) {
@@ -695,8 +798,8 @@ if (!restored) {
     // after restore, ensure UI reflects restored state
     program._updateHistoryUI && program._updateHistoryUI();
 }
-// start periodic autosave every 5s instead of saving per commit
-program.vc.startAutoSave(5000);
+// start periodic autosave every 15s instead of saving per commit
+program.vc.startAutoSave(15000);
 // ensure we flush immediately on page unload
 window.addEventListener('beforeunload', ()=> { try { program.vc.saveNow(); } catch (e) {} });
 // initialize icons and mask colors now that sprite tiles are cached
